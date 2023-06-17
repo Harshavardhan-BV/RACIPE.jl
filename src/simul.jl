@@ -7,6 +7,10 @@ using OrdinaryDiffEq
 using Distributions
 using ProgressMeter
 using StatsBase
+using AMDGPU
+using DiffEqGPU
+using StaticArrays
+using DiffEqCallbacks
 #using DataStructures: SortedDict, Reverse
 #using Combinatorics
 
@@ -18,7 +22,7 @@ Output: Input rounded to 6 digits. Can be changed to give log2 values (Testing)
 Description: Takes in a number and rounds it to 6 decimal places. Is also capable of giving the log2 values of the steady state values (Needs to be tested wrt indetification of steady states).
 =#
 ##
-function round_log!(x::Float64)
+function round_log!(x::Float32)
     #if x < 0 && x > -1
     #    x = 1e-9
     #end
@@ -36,7 +40,8 @@ Description: Takes in an already created ODE probelm to create an ensemble probl
 =#
 ##
 function prob_func(prob,i,repeat)
-    remake(prob,u0=rand(Uniform(0,100),length(prob.u0)))
+    u0_new = Float32.(rand(Uniform(0.0f0,100.0f0),length(prob.u0)))
+    remake(prob,u0=u0_new)
 end
 
 #=
@@ -49,7 +54,7 @@ Description: Identifies all the states which are within euclidean distance thres
 ##
 function identifyStates!(st_counts::Dict{Any, Float64})
     st_key = collect(keys(st_counts))::Vector{Any}
-    stk = [st_key[1]]::Vector{Vector{Float64}}
+    stk = [st_key[1]]::Vector{Vector{Float32}}
     for st in st_key
         dupli = false
         for r in stk
@@ -96,7 +101,7 @@ Description: Takes in  the paramter files, parses it into a dataframe, and then 
 ##
 function genParamMatrix(param_file::String)
     param_df = CSV.read(param_file, DataFrame)
-    return Matrix(param_df)::Matrix{Float64}
+    return Float32.(Matrix(param_df))::Matrix{Float32}
 end
 
 #=
@@ -125,11 +130,11 @@ Description: Takes in paramter set and the number of initial conditions as the i
 =#
 ##
 function simulateEnsemble!(RxnNet, p, num_ini::Int64, num_nodes::Int64)
-    u0 = rand(Uniform(0,100), num_nodes)::Vector{Float64}
-    tspan = (0.0, 100.0)::Tuple{Float64, Float64}
-    prob = ODEProblem{true}(RxnNet, u0, tspan, p)
+    u0 = Float32.(rand(Uniform(0.0f0, 100.0f0), num_nodes))
+    tspan = (0.0f0, 100.0f0)::Tuple{Float32, Float32}
+    prob = ODEProblem(RxnNet, u0, tspan, p)
     ensemble_prob = EnsembleProblem(prob,prob_func=prob_func)
-    sim = solve(ensemble_prob, Tsit5(),save_everystep=false,save_start=false,callback=TerminateSteadyState(1e-3, 1e-5),EnsembleThreads(),trajectories=num_ini)
+    sim = solve(ensemble_prob, Tsit5(), EnsembleGPUArray(AMDGPU.ROCBackend()),save_everystep=false,save_start=false,callback=TerminateSteadyState(1f-3, 1f-5),trajectories=num_ini)
     return identifyStates!(roundStates!(sim, num_ini))
 end
 
